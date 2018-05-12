@@ -1,0 +1,15 @@
+/.spyproject
+/__pycache__
+/weights
+/summaries
+/RBDsummaries
+*.swp
+*.pyc
+*.zip
+*.xlsx
+*.gz
+TrainMLP.py
+TrainRBD.py
+TrainEnsemble.py
+TestEnsemble.py
+parameters.csv
