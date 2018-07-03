@@ -54,6 +54,17 @@ def putToCall(put):
     
     return np.array(c)
 
+def callToPut(call):
+    """returns put price by the put call parity"""
+    p = call["call_price"] + call["strike_price"]*np.exp(-(call["r"]/100)*call["ttm"]) - call["close"]*np.exp(-(call["q"]/100)*call["ttm"])
+    
+    return np.array(p)
+
+def getForwardPrice(option):
+    forward_price = (option["call_price"] - option["put_price"])/(np.exp(-(option["r"]/100)*option["ttm"])) + option["strike_price"]
+    
+    return np.array(forward_price)
+
 def getBSIVFromCall(call):
     """Approximates the Black Scholes implied volatility from call price
                         !!!NOT IMPLEMENTED YET!!!"""
@@ -268,7 +279,7 @@ def formatData(df):
     
     return S, rf, q, MktPrice, K, T
 
-def getFormattedData():
+def getFormattedDataFromSource():
     df = pd.read_csv("C:/Users/Magnus/OneDrive - Nordic Biotech Advisors ApS/SPXOptionsFiltered.csv")
     bydate = getTermStructure(df)
     data = []
@@ -312,6 +323,21 @@ def getDataForMLP(df, training_size):
     
     return training_data, test_data
 
+def formatRBDData(df, training_size):
+    intermediate_data = getTermStructure(df)
+    data = []
+    
+    for i in intermediate_data:
+        intermediate_list = []
+        i = i.reset_index(drop=True)
+        for j in range(len(i)):
+            intermediate_list.append(np.array([i["strike_price"][j], i["ttm"][j], i["q"][j], i["forward_price"][j], i["r"][j], i["call_price"][j]]))
+        data.append(np.array(intermediate_list))
+        
+    training_data, test_data = getTrainAndTest4MLP(tuple(data), training_size)
+    
+    return training_data, test_data
+    
 def getRBDData(training_size):
     print("--- Getting training data ---")
     df = readData("filteredoptions")

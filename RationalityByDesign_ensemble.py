@@ -8,7 +8,7 @@ import time
 
 class Config(object):
     """hyperparameters and data"""
-    batch_size = 50
+    batch_size = 32
     max_epochs = 2**10
     J = 5
     K = 5

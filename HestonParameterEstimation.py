@@ -184,3 +184,10 @@ def estimationOnEntireSet(df, train_size):
     parameters = getAllParameters(training_data)
     
     return parameters
+
+def testOnEntireSet(test_set, parameters):
+    mse = []
+    for i in range(len(test_set)):
+        mse.append(testParameters(test_set[i], param[i]["x"]))
+        
+    return np.array(mse)
