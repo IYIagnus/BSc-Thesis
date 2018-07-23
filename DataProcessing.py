@@ -4,8 +4,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import scipy.stats as stats
+from scipy import optimize
 from scipy.interpolate import interp1d
 from HestonParameterEstimation import *
+#from lets_be_rational import implied_volatility_from_a_transformed_rational_guess
 import time
 #mpl.rcParams['agg.path.chunksize'] = 10000
 
@@ -65,11 +67,33 @@ def getForwardPrice(option):
     
     return np.array(forward_price)
 
-def getBSIVFromCall(call):
-    """Approximates the Black Scholes implied volatility from call price
-                        !!!NOT IMPLEMENTED YET!!!"""
+def getBSIVJaeckel(call):
+    """Approximates the Black Scholes implied volatility from call price 
+       using Jäckel (2016) 'Let's be rational'"""
+    IV = implied_volatility_from_a_transformed_rational_guess(call["call_price"], call["forward_price"], call["strike_price"], call["ttm"], call["q"]/100)
+                
     return IV
+
+def getBSIVNewton(call):
+    """Newton's method for finding BSIV"""
+    c, S, K, q, r, T = call["call_price"], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
     
+    sigma = np.sqrt(2 * np.pi / T)*c / S
+    for i in range(1, 100):
+        d1 = (np.log(S/K) + (r-q+(sigma**2)/2)*T)/(sigma*np.sqrt(T))
+        vega = S*np.exp(-q*T)*stats.norm.pdf(d1)*np.sqrt(T)
+        c_hat = float(BSMCallPriceContinuousDividend(S, K, r, q, T, sigma))
+        sigma = sigma - (c_hat - c)/vega
+        if abs(c_hat - c) < 1e-25 :
+            break
+    return sigma
+
+def getBSIVBrent(call):
+    c, S, K, q, r, T = call["call_price"], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
+  
+    f = lambda x: BSMCallPriceContinuousDividend(S, K, r, q, T, x)-c
+  
+    return optimize.brentq(f,0., 5.)
 
 def getTTM(date, exdate):
     """returns time-to-maturity in days"""
@@ -251,19 +275,18 @@ def matchrAndT(df, T):
 def getMktPrice(df, K, T):
     nk = len(K)
     nt = len(T)
-    count = 0
     #init matrix
     MktPrice = np.zeros((nk, nt))
     for k in range(nk):
+        temp = df[df.strike_price == K[k]]
         for t in range(nt):
-            if (K[k] == df["strike_price"][count] and T[t] == df["ttm"][count]):
-                MktPrice[k, t] = df["call_price"][count]
-                if count < len(df)-1:
-                    count = count + 1
+            temp2 = temp[temp.ttm == T[t]]
+            if len(temp2) > 0:
+                temp2 = temp2.reset_index(drop=True)
+                MktPrice[k, t] = temp2["call_price"][0]
             else:
                 MktPrice[k, t] = np.nan
             
-    
     return MktPrice
             
 
@@ -348,9 +371,11 @@ def getRBDData(training_size):
 def addC5Data(data):
     def round_down(num, divisor):
         return num - (num%divisor)
+    temp = data
+    temp[:, 3] = data[:, 3]/np.exp(((data[:, 4]/100) - (data[:, 2]/100))*data[:, 1])
     divisor = 200
     virtual = []
-    unique = np.unique(data[:, 3])
+    unique = np.unique(temp[:, 3])
     for i in unique:
         array = np.zeros((int(round_down(i, divisor)/divisor), 6))
         array[:, 0] = np.linspace(divisor, round_down(i,divisor), int(round_down(i, divisor)/divisor))
@@ -376,7 +401,7 @@ def addC6Data(data):
     count = 0
     for i in unique_ttm:
         count += 1
-        if count % 5 == 0:
+        if count % 1 == 0:
             array = np.zeros(6)
             array[1] = i
             array[3] = np.random.choice(unique_S)
