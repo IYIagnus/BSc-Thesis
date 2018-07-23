@@ -8,22 +8,24 @@ import time
 
 class Config(object):
     """hyperparameters and data"""
-    batch_size = 32
+    batch_size = 128
     max_epochs = 2**10
     J = 5
     K = 5
     I = 9
     P = 5
-    lr = 0.001
-    hint_lr = 0.0004
+    lr = 0.1
     training_size = 5
     test_size = 1
     num_runs = 3
     dropout = 1
     l2 = 0
     delta = 0.001
+    alpha = 0.9745
+    beta = 0.025
+    gamma = 0.0005
     mode = None
-    early_stopping = 30
+    early_stopping = 50
     #data = getFormattedData()
     
 def standardizeInput(variable):
@@ -42,9 +44,7 @@ class RationalityByDesign(object):
             self.output = self.inference(self.moneyness)
             self.delta_output = self.inference(self.delta_moneyness) #learning from hints
         self.loss = self.get_loss()
-        self.hint = self.get_hint_loss()
         self.train_step = self.add_training_op(self.loss)
-        self.hint_step = self.add_hint_op(self.hint)
         self.merged = tf.summary.merge_all()
         self.mse = self.getMSE()
 
@@ -81,7 +81,7 @@ class RationalityByDesign(object):
             multiply = tf.multiply(tilde_layer, bar_layer)
         
         with tf.variable_scope("hat_layer"):
-            output = tf.matmul(multiply, w_hat)
+            output = tf.matmul(multiply, tf.exp(w_hat))
 
         return output #tf.multiply(tf.multiply(tf.exp(tf.multiply(-self.r, self.ttm)), self.S), output) #shape (batch_size x 1)
     
@@ -98,11 +98,12 @@ class RationalityByDesign(object):
             dot_layer = tf.sigmoid(b_dot + tf.matmul(tf.concat([tf.reshape(moneyness, [self.config.batch_size, 1]), self.stdttm], 1), W_dot)) # shape (batch_size x K)
         
         with tf.variable_scope("umlaut_layer"):
-            umlaut_layer = b_umlaut + tf.matmul(dot_layer, W_umlaut)
-            exp_umlaut = tf.exp(umlaut_layer) #shape (batch_size x I)
+            umlaut_layer = b_umlaut + tf.matmul(dot_layer, W_umlaut)  #shape (batch_size x I)
+#            exp_umlaut = tf.exp(umlaut_layer)
             
         with tf.variable_scope("weighted_mean"):
-            output = exp_umlaut/tf.reduce_sum(exp_umlaut, 1, keep_dims=True)
+#            output = exp_umlaut/tf.reduce_sum(exp_umlaut, 1, keep_dims=True)
+            output = tf.nn.softmax(umlaut_layer)
         
         if self.config.mode == "train":
             output = tf.nn.dropout(output, self.config.dropout)
@@ -137,9 +138,17 @@ class RationalityByDesign(object):
                 #loss = tf.losses.mean_squared_error(tf.reshape(self.labels, [self.config.batch_size, 1]), self.output)
             
             with tf.variable_scope("mape_loss"):
-                mape = (100/self.config.batch_size)*tf.reduce_sum(((labels-self.output)/labels))
+                mape = (1/self.config.batch_size)*tf.reduce_sum(((tf.abs(labels-self.output))/labels))
+
+            with tf.variable_scope("hint_loss"):
+                g = tf.gradients(self.output, self.moneyness)
+                g_delta = tf.gradients(self.delta_output, self.delta_moneyness)
                 
-            loss = mse
+                delta_loss = tf.maximum(float(0), g[0]-g_delta[0])
+                hint = tf.reduce_sum(delta_loss)
+                
+                
+            loss = self.config.alpha*mse + self.config.beta*mape + self.config.gamma*hint
             
             with tf.variable_scope("L2_loss"):
                 for v in tf.trainable_variables():
@@ -148,16 +157,6 @@ class RationalityByDesign(object):
                 
             tf.summary.scalar('loss', loss)
         
-        return loss
-    
-    def get_hint_loss(self):
-        with tf.variable_scope("hint_loss"):
-                g = tf.gradients(self.output, self.moneyness)
-                g_delta = tf.gradients(self.delta_output, self.delta_moneyness)
-                
-                delta_loss = tf.maximum(float(0), g[0]-g_delta[0])
-                loss = tf.reduce_sum(delta_loss)
-                
         return loss
     
     def add_training_op(self, loss):
@@ -170,28 +169,25 @@ class RationalityByDesign(object):
             
             return train_op
         
-    def add_hint_op(self, loss):
-        with tf.variable_scope("hint_optimizer"):
-            opt = tf.train.AdamOptimizer(learning_rate=self.config.hint_lr)
-            gvs = opt.compute_gradients(loss)
-            
-            hint_op = opt.apply_gradients(gvs)
-            
-            return hint_op
-        
     def getMSE(self):
         mse = tf.losses.mean_squared_error(tf.reshape(self.labels, [self.config.batch_size, 1]),
                                            tf.exp(-self.r*self.ttm)*self.output*self.S)
         
-        return mse
+        mape = (1/self.config.batch_size)*tf.reduce_sum(((tf.abs(tf.reshape(self.labels, [self.config.batch_size, 1])-(tf.exp(-self.r*self.ttm)*self.output*self.S)))/tf.reshape(self.labels, [self.config.batch_size, 1])))
+        
+        g = tf.gradients(self.output, self.moneyness)
+        g_delta = tf.gradients(self.delta_output, self.delta_moneyness)
+        
+        delta_loss = tf.maximum(float(0), g[0]-g_delta[0])
+        hint = tf.reduce_sum(delta_loss)
+        
+        return (mse, mape, hint)
     
     def run_epoch(self, session, data, mode=None, num_epoch=0, train_writer=None, train_op=None):
         """input:
             data = numpy array of shape (n x 6), i.e. n samples of [strike_price, ttm, dividend_yield, S0, r, call_price]"""
         if mode == "train":
             self.config.mode = "train"
-        elif mode == "hint":
-            self.config.mode = "hint"
         else:
             self.config.mode = None
             
@@ -216,7 +212,6 @@ class RationalityByDesign(object):
             p = np.random.permutation(len(labels))
             labels, moneyness, stdttm, ttm, r, S0 = labels[p], moneyness[p], stdttm[p], ttm[p], r[p], S0[p]
     
-        #print(data)
         
         for step in range(total_steps):
             index = range(step*config.batch_size,(step+1)*config.batch_size)
@@ -228,19 +223,16 @@ class RationalityByDesign(object):
                          self.S: S0[index].astype(np.float32).reshape([config.batch_size, 1]),
                          self.labels: labels[index].astype(np.float32),
                          }
-            if mode == "hint":
-                loss, summary, _ = session.run([self.hint, self.merged, train_op], feed_dict=feed_dict)
-                total_loss.append(loss)
-            elif mode == "test":
+            if mode == "test":
                 mse, output, _ = session.run([self.mse, tf.exp(-self.r*self.ttm)*self.output*self.S, train_op], feed_dict=feed_dict)
                 total_loss.append(mse)
             else:
                 loss, mse, summary, _ = session.run([self.loss, self.mse, self.merged, train_op], feed_dict=feed_dict)
                 total_loss.append(mse)
             
-            if not(train_writer is None):
-                train_writer.add_summary(summary, num_epoch*total_steps + step)
+#            if not(train_writer is None):
+#                train_writer.add_summary(summary, num_epoch*total_steps + step)
         if mode is not("test"):        
-            return np.mean(total_loss)
+            return (np.mean(np.array(total_loss)[:, 0]), np.mean(np.array(total_loss)[:, 1]), np.mean(np.array(total_loss)[:, 2]))
         else:
-            return np.mean(total_loss), output
+            return (np.mean(np.array(total_loss)[:, 0]), np.mean(np.array(total_loss)[:, 1]), np.mean(np.array(total_loss)[:, 2])), output

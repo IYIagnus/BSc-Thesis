@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.fft import fft, ifft
+import pandas as pd
 
 from HestonModel_FRFT import *
 from DataProcessing import *
@@ -187,7 +188,62 @@ def estimationOnEntireSet(df, train_size):
 
 def testOnEntireSet(test_set, parameters):
     mse = []
+    outputs = []
     for i in range(len(test_set)):
-        mse.append(testParameters(test_set[i], param[i]["x"]))
+        mse.append(testParameters(test_set[i], parameters[i]))
         
     return np.array(mse)
+
+def getCallPrices(param, data):
+    
+    S, rf, q, MktPrice, K, T = data
+    N = 2**10
+    eta = 0.25
+    alpha = 1.75
+    K0 = K[0]-1
+    
+    kappa = param[0]
+    theta = param[1]
+    sigma = param[2]
+    v0 = param[3]
+    rho = param[4]
+    laambda = 0
+    
+    nk, nt = MktPrice.shape
+    lambdainc = 2/N*np.log(S/K0)+0.001
+    #init
+    ModelPrice = np.zeros((nk, nt))
+    error = 0
+    
+    for t in range(nt):
+        CallFRFT, KK, lambdainc, eta = hestonCallPriceFRFT(N, S, rf[t], q, T[t], kappa, theta, 
+                                                           laambda, rho, sigma, v0, alpha, eta, lambdainc)
+        CallPrice = linearInterpolate(KK, CallFRFT, K)
+        for k in range(nk):
+            ModelPrice[k, t] = CallPrice[k]
+    
+    return ModelPrice
+
+def formatPrices(ModelPrice, data):
+    S, rf, q, MktPrice, K, T = data
+    strikes = []
+    maturities = []
+    prices = []
+    r = []
+
+    for k in range(len(K)):
+        for t in range(len(T)):
+            strikes.append(K[k])
+            maturities.append(T[t])
+            prices.append(ModelPrice[k, t])
+            r.append(rf[t]*100)
+            
+    d = {'strike_price' : strikes, 'ttm' : maturities, 'call_price' : prices, 'r' : r}
+    df = pd.DataFrame(data = d)
+    
+    df['close'] = np.full(len(df['strike_price']), S)
+    df['moneyness'] = df['strike_price'] / df['close']
+    df['q'] = np.full(len(df), q)*100
+    
+    
+    return df
