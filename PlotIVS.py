@@ -8,7 +8,7 @@ from matplotlib import cm
 
 def plotIVS(moneyness, ttm, IV):
     
-    grid_x, grid_y = np.mgrid[moneyness.min():moneyness.max():200j, ttm.min():ttm.max():200j]
+    grid_x, grid_y = np.mgrid[moneyness.min():moneyness.max():100j, ttm.min():ttm.max():100j]
     
     points = (moneyness, ttm)
     values = IV
@@ -47,16 +47,16 @@ def compareIVS(cord1, cord2):
                     antialiased=True)
     
 def plotIVSFromDF(df):
+        
     x, y, z = np.array(df["moneyness"]), np.array(df["ttm"]), np.array(df["IV"])
     
     plotIVS(x, y, z)
 
-def compareIVSFromDF(df1, df2):    
-
+def compareIVSFromDF(df, subjects):    
     
-    x1, y1, z1 = np.array(df1["strike_price"]), np.array(df1["ttm"]), np.array(df1["IV"]+0.1)
+    x1, y1, z1 = np.array(df["moneyness"]), np.array(df["ttm"]), np.array(df[subjects[0]])
     
-    x2, y2, z2 = np.array(df2["strike_price"]), np.array(df2["ttm"]), np.array(df2["IV"])
+    x2, y2, z2 = np.array(df["moneyness"]), np.array(df["ttm"]), np.array(df[subjects[1]]+0.2)
     
     compareIVS((x1, y1, z1), (x2, y2, z2))
     

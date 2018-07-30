@@ -3,6 +3,7 @@
 /weights
 /summaries
 /RBDsummaries
+/rbd_outputs
 *.swp
 *.pyc
 *.zip

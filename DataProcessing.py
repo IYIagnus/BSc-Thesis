@@ -67,16 +67,16 @@ def getForwardPrice(option):
     
     return np.array(forward_price)
 
-def getBSIVJaeckel(call):
+def getBSIVJaeckel(call, subject):
     """Approximates the Black Scholes implied volatility from call price 
        using Jäckel (2016) 'Let's be rational'"""
-    IV = implied_volatility_from_a_transformed_rational_guess(call["call_price"], call["forward_price"], call["strike_price"], call["ttm"], call["q"]/100)
+    IV = implied_volatility_from_a_transformed_rational_guess(call[subject], call["forward_price"], call["strike_price"], call["ttm"], call["q"]/100)
                 
     return IV
 
-def getBSIVNewton(call):
+def getBSIVNewton(call, subject):
     """Newton's method for finding BSIV"""
-    c, S, K, q, r, T = call["call_price"], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
+    c, S, K, q, r, T = call[subject], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
     
     sigma = np.sqrt(2 * np.pi / T)*c / S
     for i in range(1, 100):
@@ -88,12 +88,28 @@ def getBSIVNewton(call):
             break
     return sigma
 
-def getBSIVBrent(call):
-    c, S, K, q, r, T = call["call_price"], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
+def getBSIVBrent(call, subject):
+    c, S, K, q, r, T = call[subject], call["close"], call["strike_price"], call["q"]/100, call["r"]/100, call["ttm"]
   
     f = lambda x: BSMCallPriceContinuousDividend(S, K, r, q, T, x)-c
   
     return optimize.brentq(f,0., 5.)
+
+def getBSIVFromDF(df, subject):
+    iv = []
+    df = df.reset_index(drop=True)
+    for index, row in df.iterrows():
+        if index % 1000 == 0:
+            print('Computing on index: ', index)
+        try:
+            iv.append(float(getBSIVBrent(row, subject)))
+        except:
+            try:
+                iv.append(getBSIVNewton(row, subject))
+            except:
+                iv.append('nan')
+    
+    return np.array(iv)
 
 def getTTM(date, exdate):
     """returns time-to-maturity in days"""
@@ -364,7 +380,7 @@ def formatRBDData(df, training_size):
 def getRBDData(training_size):
     print("--- Getting training data ---")
     df = readData("filteredoptions")
-    training_data, test_data = getDataForMLP(df, training_size)
+    training_data, test_data = formatRBDData(df, training_size)
 
     return (training_data, test_data)
 
@@ -373,7 +389,7 @@ def addC5Data(data):
         return num - (num%divisor)
     temp = data
     temp[:, 3] = data[:, 3]/np.exp(((data[:, 4]/100) - (data[:, 2]/100))*data[:, 1])
-    divisor = 200
+    divisor = 50
     virtual = []
     unique = np.unique(temp[:, 3])
     for i in unique:
@@ -418,3 +434,61 @@ def addVirtualOptions(data):
     condition_6 = addC6Data(condition_5)
     
     return condition_6
+
+def getSquaredError(df, subject):
+    return (df['call_price'] - df[subject])**2
+
+def getAbsPercError(df, subject):
+    error = df['call_price'] - df[subject]
+    return abs(error/df['call_price'])
+
+def getPercentageDifference(df, subject):
+    return (df['call_price'] - df[subject])/df['call_price']
+
+def getSplitWeights(arr, splits):
+    cum_arr = arr.cumsum() / arr.sum()
+    idx = np.searchsorted(cum_arr, np.linspace(0, 1, splits, endpoint=False)[1:])
+    chunks = np.split(arr, idx)
+    
+    return chunks, idx
+
+def weightedSplit(df, n, subject):
+    """Splits dataframe into n roughly equal sized intervals by subject. 
+       Returns size n list of dataframes"""
+    subject_interval = []
+    unique = np.unique(df[subject], return_counts=True)
+    split = getSplitWeights(unique[1], n)
+    
+    for i in range(n):
+        if i == 0:
+            subject_interval.append(unique[0][0:split[1][i]])
+        elif i == (n-1):
+            subject_interval.append(unique[0][split[1][i-1]:len(unique[0])])
+        else:
+            subject_interval.append(unique[0][split[1][i-1]:split[1][i]])
+            
+    sub = []
+    for i in subject_interval:
+        sub.append(df[(df[subject] <= i.max()) & (df[subject] >= i.min())])
+            
+    return sub
+
+def unweightedSplit(df, n, subject):
+    subject_interval = []
+    unique = np.unique(df[subject], return_counts=True)
+    split = np.linspace(0, len(unique[0]), n, dtype=int, endpoint=False)
+    
+    for i in range(n):
+        if i == 0:
+            subject_interval.append(unique[0][0:split[i+1]])
+        elif i == (n-1):
+            subject_interval.append(unique[0][split[i]:len(unique[0])])
+        else:
+            subject_interval.append(unique[0][split[i]:split[i+1]])
+    
+    sub = []
+    for i in subject_interval:
+        sub.append(df[(df[subject] <= i.max()) & (df[subject] >= i.min())])
+            
+    return sub
+

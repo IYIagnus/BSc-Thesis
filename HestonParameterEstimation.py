@@ -71,13 +71,13 @@ def hestonObjFunFRFT(param, *args):
         for k in range(nk):
             ModelPrice[k, t] = CallPrice[k]
         mask = ~np.isnan(MktPrice[:, t])
-        error += sum((MktPrice[:,t][mask] - ModelPrice[:,t][mask])**2)
+        error += sum(np.absolute(MktPrice[:,t][mask] - ModelPrice[:,t][mask]) / np.absolute(MktPrice[:,t][mask])) #sum((MktPrice[:,t][mask] - ModelPrice[:,t][mask])**2)
 
     return error / len(MktPrice[~np.isnan(MktPrice)])
 
 def generalizedHestonObjFun(param, *args):
     error = 0
-    
+        
     for i in args:
         error += hestonObjFunFRFT(param, i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8], i[9])
     return error / len(args)
@@ -127,6 +127,20 @@ def testParameters(data, param):
     K0 = K[0]-1
     
     MSE = hestonObjFunFRFT(param, S, K0, rf, q, MktPrice, K, T, N, eta, alpha)
+    
+    return MSE
+
+def generalizedParameterTest(data, param):
+    N = 2**10
+    eta = 0.25
+    alpha = 1.75
+    args = []
+    for i in data:
+        args.append((i[0], i[4][0]-1, i[1], i[2], i[3], i[4], i[5], N, eta, alpha))
+        
+    args = tuple(args)
+        
+    MSE = generalizedHestonObjFun(param, args[0], args[1], args[2], args[3], args[4])
     
     return MSE
 
@@ -190,7 +204,19 @@ def testOnEntireSet(test_set, parameters):
     mse = []
     outputs = []
     for i in range(len(test_set)):
-        mse.append(testParameters(test_set[i], parameters[i]))
+        try:    
+            mse.append(testParameters(test_set[i], parameters[i]))
+        except:
+            print('Error on set: ', i)
+        
+        
+    return np.array(mse)
+
+def generalizedTestOnEntireSet(test_set, parameters):
+    mse = []
+    outputs = []
+    for i in range(len(test_set)):
+        mse.append(generalizedParameterTest(test_set[i], parameters[i]))
         
     return np.array(mse)
 
@@ -214,6 +240,7 @@ def getCallPrices(param, data):
     #init
     ModelPrice = np.zeros((nk, nt))
     error = 0
+    prices = []
     
     for t in range(nt):
         CallFRFT, KK, lambdainc, eta = hestonCallPriceFRFT(N, S, rf[t], q, T[t], kappa, theta, 
@@ -221,8 +248,12 @@ def getCallPrices(param, data):
         CallPrice = linearInterpolate(KK, CallFRFT, K)
         for k in range(nk):
             ModelPrice[k, t] = CallPrice[k]
+        
+        mask = ~np.isnan(MktPrice[:, t])
+        prices.append(ModelPrice[:,t][mask])
+
     
-    return ModelPrice
+    return np.concatenate(prices)
 
 def formatPrices(ModelPrice, data):
     S, rf, q, MktPrice, K, T = data
@@ -247,3 +278,43 @@ def formatPrices(ModelPrice, data):
     
     
     return df
+
+def getPricesForMatch(day, data, param, index):
+    prices = getCallPrices(param, data)
+    temp = []
+    df = day.sort_values(['ttm', 'strike_price'])
+    df = df.reset_index()
+    
+    count = 0
+    for i in range(len(prices)):
+        temp.append(prices[i])
+        count = count + 1
+        
+        try:
+            if df['strike_price'][count] == df['strike_price'][count-1]:
+                temp.append(prices[i])
+                count = count + 1
+        except:
+            if ((index + 1) % 100 == 0) or (index + 1 == 5520):
+                print('Day nr. ', index + 1)
+    df['prices'] = temp
+    df = df.sort_values('index')
+    
+    return np.array(df['prices'])
+    
+
+def matchHestonToDF(seperate_days, data, param):
+    heston = []
+    
+    count = 0
+    for i in range(len(seperate_days)):
+        try:
+            heston.append(getPricesForMatch(seperate_days[i], data[i], param[count], i))
+        except:
+            heston.append(np.full(len(seperate_days[i]), 'nan'))
+            print('error')
+        if (i+1) % 6 == 0:
+            count = count + 1
+            
+    
+    return np.concatenate(heston)
