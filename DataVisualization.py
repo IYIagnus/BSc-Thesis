@@ -116,10 +116,7 @@ def getGridForIVS(df, k, t, subject):
     return np.array(output)
 
 def plotImpliedVolSurf(df, k, t, subjects):
-    
-    df = df[df.moneyness > 0.8]
-    df = df[df.ttm > 0.2]
-    
+
     market_grid = getGridForIVS(df, k, t, 'IV')
     grids = []
     
